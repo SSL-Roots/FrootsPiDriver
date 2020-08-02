@@ -1,0 +1,8 @@
+# Ref:https://github.com/rt-net/RaspberryPiMouse/blob/master/src/drivers/.clang-format
+
+BasedOnStyle: LLVM
+IndentWidth: 8
+UseTab: Always
+BreakBeforeBraces: Linux
+AllowShortIfStatementsOnASingleLine: false
+IndentCaseLabels: false
