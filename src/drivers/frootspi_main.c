@@ -1,15 +1,15 @@
 // SPDX-License-Identifier: GPL-2.0
 
-#include <asm/current.h>
-#include <asm/uaccess.h>
-#include <linux/cdev.h>
-#include <linux/device.h>
-#include <linux/fs.h>
-#include <linux/init.h>
-#include <linux/kernel.h>
-#include <linux/module.h>
-#include <linux/sched.h>
-#include <linux/types.h>
+#include <linux/cdev.h>  // cdev_*()
+// #include <linux/device.h>
+#include <linux/fs.h>  // struct file, open, release
+// #include <linux/init.h>
+// #include <linux/kernel.h>
+#include <linux/module.h>  // module_*()
+// #include <linux/sched.h>
+#include <linux/slab.h>  // kmalloc()
+// #include <linux/types.h>
+#include <linux/uaccess.h>  // copy_to_user()
 
 MODULE_LICENSE("GPL");
 
@@ -23,16 +23,42 @@ static struct cdev mydevice_cdev;
 
 static struct class *mydevice_class = NULL;
 
+#define NUM_BUFFER 256
+struct _mydevice_file_data {
+    unsigned char buffer[NUM_BUFFER];
+};
+
 
 static int frootspi_open(struct inode *inode, struct file *file)
 {
 	printk("frootspi_open\n");
+
+	// デバイスファイルを読み出したファイルの、固有のデータ格納領域を確保
+	struct _mydevice_file_data *p = kmalloc(sizeof(struct _mydevice_file_data), GFP_KERNEL);
+    if (p == NULL) {
+        printk(KERN_ERR  "kmalloc\n");
+        return -ENOMEM;
+    }
+
+	// ファイル固有データを初期化
+    strlcat(p->buffer, "dummy", 5);
+
+
+	// ユーザ側のファイルディスクリプタで確保した領域のポインタを確保してもらう
+    file->private_data = p;
+
 	return 0;
 }
 
 static int frootspi_close(struct inode *inode, struct file *file)
 {
 	printk("frootspi_close\n");
+
+	if (file->private_data) {
+        /* open時に確保した、各ファイル固有のデータ領域を解放する */
+        kfree(file->private_data);
+        file->private_data = NULL;
+    }
 	return 0;
 }
 
@@ -40,15 +66,26 @@ static ssize_t frootspi_read(struct file *filp, char __user *buf, size_t count,
 			     loff_t *f_pos)
 {
 	printk("frootspi_read\n");
-	buf[0] = 'A';
-	return 1;
+
+	if(count > NUM_BUFFER) count = NUM_BUFFER;
+
+	struct _mydevice_file_data *p = filp->private_data;
+    if (copy_to_user(buf, p->buffer, count) != 0) {
+        return -EFAULT;
+    }
+    return count;
 }
 
 static ssize_t frootspi_write(struct file *filp, const char __user *buf,
 			      size_t count, loff_t *f_pos)
 {
 	printk("frootspi_write\n");
-	return 1;
+
+	struct _mydevice_file_data *p = filp->private_data;
+    if (copy_from_user(p->buffer, buf, count) != 0) {
+        return -EFAULT;
+    }
+    return count;
 }
 
 static struct file_operations frootspi_fops = {
