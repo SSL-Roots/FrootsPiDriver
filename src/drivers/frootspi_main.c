@@ -15,12 +15,15 @@ MODULE_LICENSE("GPL");
 
 extern int register_hello_dev(void);
 extern void unregister_hello_dev(void);
+extern int register_spi_dev(void);
+extern void unregister_spi_dev(void);
 
 static int frootspi_init(void)
 {
 	printk("frootspi_init\n");
 
 	register_hello_dev();
+	register_spi_dev();
 
 	return 0;
 }
@@ -30,6 +33,7 @@ static void frootspi_exit(void)
 	printk("frootspi_exit\n");
 
 	unregister_hello_dev();
+	unregister_spi_dev();
 }
 
 module_init(frootspi_init);

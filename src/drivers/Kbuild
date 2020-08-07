@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-2.0
 
 obj-m  := frootspi.o
-frootspi-y := frootspi_main.o frootspi_hello.o
+frootspi-y := frootspi_main.o frootspi_hello.o frootspi_spi.o
 
 ccflags-y := -std=gnu99 -Wno-declaration-after-statement
