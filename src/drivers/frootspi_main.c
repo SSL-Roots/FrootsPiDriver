@@ -15,15 +15,15 @@ MODULE_LICENSE("GPL");
 
 extern int register_hello_dev(void);
 extern void unregister_hello_dev(void);
-extern int register_spi_dev(void);
-extern void unregister_spi_dev(void);
+extern int register_devfiles_for_mcp23s08(void);
+extern void unregister_devfiles_for_mcp23s08(void);
 
 static int frootspi_init(void)
 {
 	printk("frootspi_init\n");
 
 	register_hello_dev();
-	register_spi_dev();
+	register_devfiles_for_mcp23s08();
 
 	return 0;
 }
@@ -33,7 +33,7 @@ static void frootspi_exit(void)
 	printk("frootspi_exit\n");
 
 	unregister_hello_dev();
-	unregister_spi_dev();
+	unregister_devfiles_for_mcp23s08();
 }
 
 module_init(frootspi_init);
