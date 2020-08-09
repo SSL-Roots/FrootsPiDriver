@@ -4,8 +4,8 @@
 #include <linux/spi/spi.h>  // spi_*()
 #include <linux/uaccess.h>  // copy_to_user()
 
+#define MAX_BUFLEN 64  // copy_to_user用のバッファサイズ
 // ---------- SPI driver ----------
-
 #define SPI_DRIVER_NAME "frootspi_mcp23s08"
 #define SPI_BUS_NUM 1
 #define SPI_CHIP_SELECT 0
@@ -13,18 +13,27 @@
 #define MCP23S08_WORD_SIZE 8
 #define MCP23S08_PIN_A0 0  // A0ピンの値（電位）(1/0)
 #define MCP23S08_PIN_A1 0  // A1ピンの値（電位）(1/0)
-#define MCP23S08_REG_IODIR   0x00
-#define MCP23S08_REG_IPOL    0x01
-#define MCP23S08_REG_GPINTEN 0x02
-#define MCP23S08_REG_DEFVAL  0x03
-#define MCP23S08_REG_INTCON  0x04
-#define MCP23S08_REG_IOCON   0x05
-#define MCP23S08_REG_GPPU    0x06
-#define MCP23S08_REG_INTF    0x07
-#define MCP23S08_REG_INTCAP  0x08
-#define MCP23S08_REG_GPIO    0x09
-#define MCP23S08_REG_OLAT    0x0a
+#define MCP23S08_READ 1
+#define MCP23S08_WRITE 0
+#define MCP23S08_REG_IODIR   0x00  // 入出力設定
+#define MCP23S08_REG_IPOL    0x01  // 入力極性設定（GPIOの論理反転できる）
+#define MCP23S08_REG_GPINTEN 0x02  // 割り込みON/OFF設定
+#define MCP23S08_REG_DEFVAL  0x03  // 割り込みのデフォルト値設定
+#define MCP23S08_REG_INTCON  0x04  // 割り込み制御設定
+#define MCP23S08_REG_IOCON   0x05  // エキスパンダ全体の設定
+#define MCP23S08_REG_GPPU    0x06  // プルアップ設定
+#define MCP23S08_REG_INTF    0x07  // 割り込みフラグ
+#define MCP23S08_REG_INTCAP  0x08  // 割り込み時の論理レベル
+#define MCP23S08_REG_GPIO    0x09  // GPIO
+#define MCP23S08_REG_OLAT    0x0a  // 出力ラッチレジスタ
 #define MCP23S08_REG_SIZE    0x0b
+#define MCP23S08_GPIO_LED 0
+#define MCP23S08_GPIO_PUSHSW0 1
+#define MCP23S08_GPIO_PUSHSW1 2
+#define MCP23S08_GPIO_PUSHSW2 3
+#define MCP23S08_GPIO_PUSHSW3 4
+#define MCP23S08_GPIO_TOGLSW0 5
+#define MCP23S08_GPIO_TOGLSW1 6
 
 // デバイスを識別するテーブル { "name", "好きなデータ"}を追加する
 // カーネルはこの"name"をもとに対応するデバイスドライバを探す
@@ -68,11 +77,81 @@ struct pushsw_device_info {
 	struct cdev cdev;
 	unsigned int device_major;
 	unsigned int device_minor;
+	unsigned char target_gpio_num;
 };
 static struct pushsw_device_info stored_device_info[PUSHSW_MAX_MINORS];
 
 
 // ---------- SPI driver functions ----------
+
+static unsigned int mcp23s08_control_reg(const unsigned char reg, const unsigned char rw,
+	const unsigned char write_data, unsigned char *read_data)
+{
+	char str[128];
+
+	// SPIバス番号に紐付いたマスターを取得
+	struct spi_master *master = spi_busnum_to_master(mcp23s08_info.bus_num);
+	// SPIマスターが使用しているバスとCSを文字列に変換
+	snprintf(str, sizeof(str), "%s.%u", dev_name(&master->dev),
+		 mcp23s08_info.chip_select);
+
+	// 文字列"{bus}.{cs}"をもとに、デバイスを取得
+	struct device *dev = bus_find_device_by_name(&spi_bus_type, NULL, str);
+	// struct deviceを struct spi_deviceに変換
+	struct spi_device *spi = to_spi_device(dev);
+	struct mcp23s08_drvdata *data = (struct mcp23s08_drvdata *)spi_get_drvdata(spi);
+
+	// 排他制御開始！
+	mutex_lock(&data->my_mutex);
+	// tx[0] = Opcode = 0b0100_0{A1}{A0}{R/W}
+	data->tx[0] = 0x40;
+	data->tx[0] |= MCP23S08_PIN_A1 << 2;
+	data->tx[0] |= MCP23S08_PIN_A0 << 1;
+	data->tx[0] |= rw << 0;
+	data->tx[1] = reg;
+	data->tx[2] = write_data;
+	int retval = spi_sync(data->spi, &data->msg);
+	// 排他制御終了
+	mutex_unlock(&data->my_mutex);
+
+	if(retval){
+		printk(KERN_WARNING "%s: spi_sync() failed.\n", __func__);
+	}else{
+		*read_data = data->rx[2];
+	}
+
+	return retval;
+}
+
+// MCP23S08のレジスタ設定
+// GPIOの入出力設定や割り込み設定等をここで行う
+static int mcp23s08_initialize_reg(void)
+{
+	unsigned char txdata = 0;
+	unsigned char rxdata = 0;
+	// 入出力ピンの設定
+	txdata = 0xFF ^ (1 << MCP23S08_GPIO_LED);
+	if(mcp23s08_control_reg(MCP23S08_REG_IODIR, MCP23S08_WRITE, txdata, &rxdata)){
+		printk(KERN_ERR "%s: failed to initialize IODIR.\n", __func__);
+		return -1;
+	}
+
+	return 0;
+}
+
+// MCP23S08のGPIOの値を取得
+// 失敗した場合は-1を返す
+static int mcp23s08_read_gpio(const unsigned char gpio_num)
+{
+	unsigned char txdata = 0;
+	unsigned char rxdata = 0;
+	if(mcp23s08_control_reg(MCP23S08_REG_GPIO, MCP23S08_READ, txdata, &rxdata)){
+		printk(KERN_ERR "%s: failed to read GPIO.\n", __func__);
+		return -1;
+	}
+
+	return (rxdata >> gpio_num) & 1;
+}
 
 static int mcp23s08_probe(struct spi_device *spi)
 {
@@ -85,7 +164,7 @@ static int mcp23s08_probe(struct spi_device *spi)
 	// 異常な値が設定される場合はspi_setup()が失敗する
 	if (spi_setup(spi)){
 		printk(KERN_ERR "%s: spi_setup() failed\n", __func__);
-		return -ENODEV;
+		return -1;
 	}
 
 	// kzalloc: mallocのカーネル空間版のメモリーゼロクリア版
@@ -97,7 +176,7 @@ static int mcp23s08_probe(struct spi_device *spi)
 	data = kzalloc(sizeof(struct mcp23s08_drvdata), GFP_KERNEL);
 	if (data == NULL) {
 		printk(KERN_ERR "%s: kszalloc() failed\n", __func__);
-		return -ENODEV;
+		return -1;
 	}
 
 	data->spi = spi;
@@ -123,7 +202,11 @@ static int mcp23s08_probe(struct spi_device *spi)
 	// プライベートデータはspi_get_drvdata() or dev_get_drvdata()で取得できる
 	spi_set_drvdata(spi, data);
 
-	printk(KERN_INFO "%s: mcp23s08 probed", SPI_DRIVER_NAME);
+	if(mcp23s08_initialize_reg()){
+		printk(KERN_ERR "%s: mcp23s08_initialzie_reg() failed\n", __func__);
+		return -1;
+	}
+	printk(KERN_DEBUG "%s: mcp23s08 probed", SPI_DRIVER_NAME);
 
 	return 0;
 }
@@ -138,7 +221,7 @@ static int mcp23s08_remove(struct spi_device *spi)
 	// プライベートデータを開放
 	kfree(data);
 
-	printk(KERN_INFO "%s: mcp23s08 removed", SPI_DRIVER_NAME);
+	printk(KERN_DEBUG "%s: mcp23s08 removed", SPI_DRIVER_NAME);
 
 	return 0;
 }
@@ -153,70 +236,6 @@ static struct spi_driver mcp23s08_driver = {
     .probe = mcp23s08_probe,
     .remove = mcp23s08_remove,
 };
-
-static unsigned int mcp23s08_get_value(void)
-{
-	char str[128];
-
-	// SPIバス番号に紐付いたマスターを取得
-	struct spi_master *master = spi_busnum_to_master(mcp23s08_info.bus_num);
-	// SPIマスターが使用しているバスとCSを文字列に変換
-	snprintf(str, sizeof(str), "%s.%u", dev_name(&master->dev),
-		 mcp23s08_info.chip_select);
-
-	// 文字列"{bus}.{cs}"をもとに、デバイスを取得
-	struct device *dev = bus_find_device_by_name(&spi_bus_type, NULL, str);
-	// struct deviceを struct spi_deviceに変換
-	struct spi_device *spi = to_spi_device(dev);
-	struct mcp23s08_drvdata *data = (struct mcp23s08_drvdata *)spi_get_drvdata(spi);
-
-	// 排他制御開始！
-	mutex_lock(&data->my_mutex);
-	// data->tx[0] = 0x40;
-	// data->tx[0] |= MCP23S08_PIN_A1 << 2;
-	// data->tx[0] |= MCP23S08_PIN_A0 << 1;
-	// data->tx[0] |= 1 << 0;  // Read
-	// data->tx[1] = 0;  // dummy
-	// data->tx[2] = 0;
-	// printk(KERN_INFO "Send: %d, %d, %d\n", data->tx[0], data->tx[1], data->tx[2]);
-
-	// // spi_sync: ブロッキング/同期 SPIデータ送信
-	// // spi_device に spi_message を送信する
-	// if (spi_sync(data->spi, &data->msg)) {
-	// 	printk(KERN_INFO "%s: spi_sync_transfer returned non zero\n",
-	// 	       __func__);
-	// }
-
-	// unsigned char txdata[7];
-	// txdata[0] = 0x40; // 書き込み
-	// txdata[1] = MCP23S08_REG_IODIR; // 書き込みアドレスを指定
-	// txdata[2] = 0xFF; // IODIR: 入出力ピン設定: 全て入力
-	// // デフォルトはシーケンシャルモードなので、アドレスが自動でインクリメントされる
-	// txdata[3] = 0x00; // IPOL: 入力極性設定: 入力ピンと同じ論理をGPIOで扱う
-	// txdata[4] = 0x00; // GPINTEN: 割り込み設定: 割り込みイベントなし
-	// txdata[5] = 0x00; // DEFVAL: 割り込みのデフォルト値
-	// txdata[6] = 0x00; // INTCON: 割り込みの制御値
-	// txdata[7] = 0x00; // IOCON: 全体設定: 
-
-	unsigned char txdata[2];
-	txdata[0] = 0x41;
-	txdata[1] = MCP23S08_REG_IODIR;
-	unsigned char rxdata[2];
-
-	if (spi_write_then_read(data->spi, txdata, 2, rxdata, 2)){
-		printk(KERN_INFO "spi_write_then_read() failed.\n");
-	}
-
-	// 排他制御終了
-	mutex_unlock(&data->my_mutex);
-	printk(KERN_INFO "Recv: :%d, %d\n", rxdata[0], rxdata[1]);
-
-	// data->rx[0] : blank
-	// data->rx[1] : address
-	// data->rx[2] : data
-	// printk(KERN_INFO "Recv: :%d, %d, %d\n", data->rx[0], data->rx[1], data->rx[2]);
-	return 0;
-}
 
 static void spi_remove_device(struct spi_master *master, unsigned int cs)
 {
@@ -246,7 +265,7 @@ int register_spi_dev(void)
 	if (!master) {
 		printk(KERN_ERR "%s: spi_busnum_to_master returned NULL\n", __func__);
 		spi_unregister_driver(&mcp23s08_driver);
-		return -ENODEV;
+		return -1;
 	}
 
 	// なんでremoveするの？
@@ -259,7 +278,7 @@ int register_spi_dev(void)
 	if (!spi_device) {
 		printk(KERN_ERR "%s: spi_new_device returned NULL\n", __func__);
 		spi_unregister_driver(&mcp23s08_driver);
-		return -ENODEV;
+		return -1;
 	}
 
 	return 0;
@@ -283,16 +302,31 @@ void unregister_spi_dev(void)
 
 static int pushsw_open(struct inode *inode, struct file *filep)
 {
-	printk("pushsw_open\n");
+	printk(KERN_DEBUG "pushsw_open\n");
 
 	struct pushsw_device_info *dev_info;
 	// container_of(メンバーへのポインタ, 構造体の型, 構造体メンバの名前)
 	dev_info = container_of(inode->i_cdev, struct pushsw_device_info, cdev);
 
-	// ここに何かしらのエラー処理がいるかも
-
 	dev_info->device_major = MAJOR(inode->i_rdev);
 	dev_info->device_minor = MINOR(inode->i_rdev);
+
+	switch(dev_info->device_minor) {
+	case 0:
+		dev_info->target_gpio_num = MCP23S08_GPIO_PUSHSW0;
+		break;
+	case 1:
+		dev_info->target_gpio_num = MCP23S08_GPIO_PUSHSW1;
+		break;
+	case 2:
+		dev_info->target_gpio_num = MCP23S08_GPIO_PUSHSW2;
+		break;
+	case 3:
+		dev_info->target_gpio_num = MCP23S08_GPIO_PUSHSW3;
+		break;
+	default:
+		dev_info->target_gpio_num = 0;
+	}
 
 	filep->private_data = dev_info;
 
@@ -301,7 +335,7 @@ static int pushsw_open(struct inode *inode, struct file *filep)
 
 static int pushsw_release(struct inode *inode, struct file *filep)
 {
-	printk("pushsw_close\n");
+	printk(KERN_DEBUG "pushsw_close\n");
 
 	// デバイスによっては何もしなかったりする
 	// kfree(filep->private_data);
@@ -312,10 +346,6 @@ static ssize_t pushsw_read(struct file *filep, char __user *buf, size_t count,
 			     loff_t *f_pos)
 {
 	struct pushsw_device_info *dev_info = filep->private_data;
-	printk("helo_read, major:%d, minor:%d\n",
-		dev_info->device_major,
-		dev_info->device_minor);
-
 	// オフセットがあったら正常終了する
 	// 短い文字列しかコピーしないので、これで問題なし
 	// 長い文字列をコピーするばあいは、オフセットが重要
@@ -323,21 +353,26 @@ static ssize_t pushsw_read(struct file *filep, char __user *buf, size_t count,
 		return 0;  // EOF
 	}
 
-	mcp23s08_get_value();
+	int gpio_value = mcp23s08_read_gpio(dev_info->target_gpio_num);
+	if (gpio_value < 0){
+		printk(KERN_ERR "%s: mcp23s08_read_gpio() failed.\n", __func__);
+		return 0;
+	}
 
-	// readするサイズに変更する
-	// nバイトだけreadする、という使い方を想定していない
-	unsigned char text[255] = "Hello PUSHSW\n";
-	count = strlen(text);
+	unsigned char buffer[MAX_BUFLEN];
+	sprintf(buffer, "%d\n", gpio_value);
+
+	count = strlen(buffer);
 
 	// pushswドライバがもつテキスト情報をユーザ空間へコピーする
 	// copy_to_userで、buf宛に、dev_info->bufferのデータを、countバイトコピーする
 	// コピーできなかったバイト数が返り値で渡される
-	if (copy_to_user((void *)buf, text, count)) {
-		printk(KERN_INFO "ERROR read\n");
+	if (copy_to_user((void *)buf, &buffer, count)) {
+		printk(KERN_ERR "%s: copy_to_user() failed.\n", __func__);
 		return -1;
 	}
 	*f_pos += count;
+
     return count;
 }
 
