@@ -1,7 +1,5 @@
 #include <linux/cdev.h>  // cdev_*()
 #include <linux/fs.h>  // struct file, open, release
-#include <linux/module.h>
-#include <linux/spi/spi.h>  // spi_*()
 #include <linux/uaccess.h>  // copy_to_user()
 
 #include "mcp23s08_driver.h"
@@ -10,10 +8,6 @@
 #define PUSHSW_BASE_MINOR 0
 #define PUSHSW_MAX_MINORS 4
 #define PUSHSW_DEVICE_NAME "frootspi_pushsw"
-#define PUSHSW_GPIO_SW0 1
-#define PUSHSW_GPIO_SW1 2
-#define PUSHSW_GPIO_SW2 3
-#define PUSHSW_GPIO_SW3 4
 
 static struct class *pushsw_class;
 static int pushsw_major;
@@ -174,7 +168,8 @@ failed_class_create:
 	return retval;
 }
 
-void unregister_pushsw_dev(void){
+void unregister_pushsw_dev(void)
+{
 	// 基本的にはregister_pushsw_devの逆の手順でメモリを開放していく
 	for (int i = 0; i < PUSHSW_MAX_MINORS; i++){
 		device_destroy(pushsw_class, MKDEV(pushsw_major, PUSHSW_BASE_MINOR + i));

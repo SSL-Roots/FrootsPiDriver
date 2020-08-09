@@ -1,6 +1,5 @@
 #include <linux/cdev.h>  // cdev_*()
 #include <linux/fs.h>  // struct file, open, release
-// #include <linux/slab.h>  // kmalloc()
 #include <linux/uaccess.h>  // copy_to_user()
 
 #define HELLO_BASE_MINOR 0
