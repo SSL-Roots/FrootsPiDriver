@@ -275,3 +275,37 @@ int mcp23s08_read_gpio(const unsigned char gpio_num)
 
 	return (rxdata >> gpio_num) & 1;
 }
+
+// MCP23S08のGPIOに値をセット
+// 失敗した場合は-1を返す
+int mcp23s08_write_gpio(const unsigned char gpio_num, const unsigned char value)
+{
+	unsigned char txdata = 0;
+	unsigned char rxdata = 0;
+
+	// 現在のGPIOの状態を取得
+	if(mcp23s08_control_reg(MCP23S08_REG_GPIO, MCP23S08_READ, txdata, &rxdata)){
+		printk(KERN_ERR "%s %s: failed to read from GPIO.\n",
+			SPI_DRIVER_NAME, __func__);
+		return -1;
+	}
+
+	// 指定されたGPIOビットだけ変更する
+	if (value == 0){
+		txdata = rxdata & ~(1 << gpio_num);
+	}else if(value == 1){
+		txdata = rxdata | (1 << gpio_num);
+	}else{
+		printk(KERN_ERR "%s %s: Invalid value: %d.\n",
+			SPI_DRIVER_NAME, __func__, value);
+		return -1;
+	}
+
+	if(mcp23s08_control_reg(MCP23S08_REG_GPIO, MCP23S08_WRITE, txdata, &rxdata)){
+		printk(KERN_ERR "%s %s: failed to write to GPIO.\n",
+			SPI_DRIVER_NAME, __func__);
+		return -1;
+	}
+
+	return 0;
+}
