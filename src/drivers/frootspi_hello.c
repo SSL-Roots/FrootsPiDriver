@@ -22,8 +22,6 @@ static struct hello_device_info stored_device_info[HELLO_MAX_MINORS];
 
 static int hello_open(struct inode *inode, struct file *filep)
 {
-	printk("hello_open\n");
-
 	struct hello_device_info *dev_info;
 	// container_of(メンバーへのポインタ, 構造体の型, 構造体メンバの名前)
 	dev_info = container_of(inode->i_cdev, struct hello_device_info, cdev);
@@ -35,15 +33,19 @@ static int hello_open(struct inode *inode, struct file *filep)
 
 	filep->private_data = dev_info;
 
+	printk(KERN_DEBUG "%s %s: hello device opend.\n",
+		HELLO_DEVICE_NAME, __func__);
+
 	return 0;
 }
 
 static int hello_release(struct inode *inode, struct file *filep)
 {
-	printk("hello_close\n");
-
 	// デバイスによっては何もしなかったりする
 	// kfree(filep->private_data);
+	printk(KERN_DEBUG "%s %s: hello device closed.\n",
+		HELLO_DEVICE_NAME, __func__);
+
 	return 0;
 }
 
@@ -51,7 +53,8 @@ static ssize_t hello_read(struct file *filep, char __user *buf, size_t count,
 			     loff_t *f_pos)
 {
 	struct hello_device_info *dev_info = filep->private_data;
-	printk("helo_read, major:%d, minor:%d\n",
+	printk(KERN_DEBUG "%s %s: helo_read, major:%d, minor:%d\n",
+		HELLO_DEVICE_NAME, __func__,
 		dev_info->device_major,
 		dev_info->device_minor);
 
@@ -70,7 +73,8 @@ static ssize_t hello_read(struct file *filep, char __user *buf, size_t count,
 	// copy_to_userで、buf宛に、dev_info->bufferのデータを、countバイトコピーする
 	// コピーできなかったバイト数が返り値で渡される
 	if (copy_to_user((void *)buf, dev_info->buffer, count)) {
-		printk(KERN_INFO "ERROR read\n");
+		printk(KERN_ERR "%s %s: copy_to_user() failed.\n",
+			HELLO_DEVICE_NAME, __func__);
 		return -1;
 	}
 	*f_pos += count;
@@ -81,12 +85,14 @@ static ssize_t hello_write(struct file *filep, const char __user *buf,
 			      size_t count, loff_t *f_pos)
 {
 	struct hello_device_info *dev_info = filep->private_data;
-	printk("hello_write, major:%d, minor:%d\n",
+	printk("%s %s: hello_write, major:%d, minor:%d\n",
+		HELLO_DEVICE_NAME, __func__,
 		dev_info->device_major,
 		dev_info->device_minor);
 
     if (copy_from_user(dev_info->buffer, buf, count) != 0) {
-		printk(KERN_INFO "ERROR read\n");
+		printk(KERN_ERR "%s %s: copy_from_user() failed.\n",
+			HELLO_DEVICE_NAME, __func__);
         return -1;
     }
 
@@ -109,7 +115,8 @@ int register_hello_dev(void)
 	retval = alloc_chrdev_region(&dev, HELLO_BASE_MINOR, HELLO_MAX_MINORS, HELLO_DEVICE_NAME);
 	if (retval < 0) {
 		// 確保できなかったらエラーを返して終了
-		printk(KERN_ERR "%s: unable to allocate device number\n", HELLO_DEVICE_NAME);
+		printk(KERN_ERR "%s %s: unable to allocate device number\n",
+			HELLO_DEVICE_NAME, __func__);
 		return retval;
 	}
 
@@ -119,7 +126,8 @@ int register_hello_dev(void)
 	if (IS_ERR(hello_class)) {
 		// 登録できなかったらエラー処理に移動する
 		retval = PTR_ERR(hello_class);
-		printk(KERN_ERR "%s: class creation failed\n", HELLO_DEVICE_NAME);
+		printk(KERN_ERR "%s %s: class creation failed\n",
+			HELLO_DEVICE_NAME, __func__);
 		goto failed_class_create;
 	}
 
@@ -138,8 +146,9 @@ int register_hello_dev(void)
 			MKDEV(hello_major, HELLO_BASE_MINOR + i), 1);
 		if (retval < 0) {
 			// 登録できなかったらエラー処理へ移動する
-			printk(KERN_ERR "%s: minor=%d: chardev registration failed\n",
-				HELLO_DEVICE_NAME, HELLO_BASE_MINOR + i);
+			printk(KERN_ERR "%s %s: minor=%d: chardev registration failed\n",
+				HELLO_DEVICE_NAME, __func__,
+				HELLO_BASE_MINOR + i);
 			goto failed_cdev_add;
 		}
 

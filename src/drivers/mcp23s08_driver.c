@@ -1,12 +1,10 @@
-#include <linux/cdev.h>  // cdev_*()
-#include <linux/fs.h>  // struct file, open, release
 #include <linux/module.h>
 #include <linux/spi/spi.h>  // spi_*()
-#include <linux/uaccess.h>  // copy_to_user()
 
-#define MAX_BUFLEN 64  // copy_to_user用のバッファサイズ
+#include "mcp23s08_driver.h"
+
 // ---------- SPI driver ----------
-#define SPI_DRIVER_NAME "frootspi_mcp23s08"
+#define SPI_DRIVER_NAME "frootspi_mcp23s08_driver"
 #define SPI_BUS_NUM 1
 #define SPI_CHIP_SELECT 0
 #define MCP23S08_PACKET_SIZE 3
@@ -27,13 +25,6 @@
 #define MCP23S08_REG_GPIO    0x09  // GPIO
 #define MCP23S08_REG_OLAT    0x0a  // 出力ラッチレジスタ
 #define MCP23S08_REG_SIZE    0x0b
-#define MCP23S08_GPIO_LED 0
-#define MCP23S08_GPIO_PUSHSW0 1
-#define MCP23S08_GPIO_PUSHSW1 2
-#define MCP23S08_GPIO_PUSHSW2 3
-#define MCP23S08_GPIO_PUSHSW3 4
-#define MCP23S08_GPIO_TOGLSW0 5
-#define MCP23S08_GPIO_TOGLSW1 6
 
 // デバイスを識別するテーブル { "name", "好きなデータ"}を追加する
 // カーネルはこの"name"をもとに対応するデバイスドライバを探す
@@ -64,25 +55,6 @@ struct mcp23s08_drvdata {
 	struct spi_transfer xfer ____cacheline_aligned;
 	struct spi_message msg ____cacheline_aligned;
 };
-
-// ---------- Push switches ----------
-#define PUSHSW_BASE_MINOR 0
-#define PUSHSW_MAX_MINORS 4
-#define PUSHSW_DEVICE_NAME "frootspi_pushsw"
-
-static struct class *pushsw_class;
-static int pushsw_major;
-struct pushsw_device_info {
-	// ここはある程度自由に定義できる
-	struct cdev cdev;
-	unsigned int device_major;
-	unsigned int device_minor;
-	unsigned char target_gpio_num;
-};
-static struct pushsw_device_info stored_device_info[PUSHSW_MAX_MINORS];
-
-
-// ---------- SPI driver functions ----------
 
 static unsigned int mcp23s08_control_reg(const unsigned char reg, const unsigned char rw,
 	const unsigned char write_data, unsigned char *read_data)
@@ -115,7 +87,8 @@ static unsigned int mcp23s08_control_reg(const unsigned char reg, const unsigned
 	mutex_unlock(&data->my_mutex);
 
 	if(retval){
-		printk(KERN_WARNING "%s: spi_sync() failed.\n", __func__);
+		printk(KERN_WARNING "%s %s: spi_sync() failed.\n",
+			SPI_DRIVER_NAME, __func__);
 	}else{
 		*read_data = data->rx[2];
 	}
@@ -132,38 +105,25 @@ static int mcp23s08_initialize_reg(void)
 	// 入出力ピンの設定
 	txdata = 0xFF ^ (1 << MCP23S08_GPIO_LED);
 	if(mcp23s08_control_reg(MCP23S08_REG_IODIR, MCP23S08_WRITE, txdata, &rxdata)){
-		printk(KERN_ERR "%s: failed to initialize IODIR.\n", __func__);
+		printk(KERN_ERR "%s %s: failed to initialize IODIR.\n",
+			SPI_DRIVER_NAME, __func__);
 		return -1;
 	}
 
 	return 0;
 }
 
-// MCP23S08のGPIOの値を取得
-// 失敗した場合は-1を返す
-static int mcp23s08_read_gpio(const unsigned char gpio_num)
-{
-	unsigned char txdata = 0;
-	unsigned char rxdata = 0;
-	if(mcp23s08_control_reg(MCP23S08_REG_GPIO, MCP23S08_READ, txdata, &rxdata)){
-		printk(KERN_ERR "%s: failed to read GPIO.\n", __func__);
-		return -1;
-	}
-
-	return (rxdata >> gpio_num) & 1;
-}
 
 static int mcp23s08_probe(struct spi_device *spi)
 {
-	printk("mcp23s08_probe\n");
-	
 	spi->max_speed_hz = mcp23s08_info.max_speed_hz;
 	spi->mode = mcp23s08_info.mode;
 	spi->bits_per_word = MCP23S08_WORD_SIZE;
 	// SPI モード、クロックレート、ワードサイズを設定
 	// 異常な値が設定される場合はspi_setup()が失敗する
 	if (spi_setup(spi)){
-		printk(KERN_ERR "%s: spi_setup() failed\n", __func__);
+		printk(KERN_ERR "%s %s: spi_setup() failed\n",
+			SPI_DRIVER_NAME, __func__);
 		return -1;
 	}
 
@@ -175,7 +135,8 @@ static int mcp23s08_probe(struct spi_device *spi)
 	struct mcp23s08_drvdata *data;
 	data = kzalloc(sizeof(struct mcp23s08_drvdata), GFP_KERNEL);
 	if (data == NULL) {
-		printk(KERN_ERR "%s: kszalloc() failed\n", __func__);
+		printk(KERN_ERR "%s %s: kszalloc() failed\n",
+			SPI_DRIVER_NAME, __func__);
 		return -1;
 	}
 
@@ -203,25 +164,24 @@ static int mcp23s08_probe(struct spi_device *spi)
 	spi_set_drvdata(spi, data);
 
 	if(mcp23s08_initialize_reg()){
-		printk(KERN_ERR "%s: mcp23s08_initialzie_reg() failed\n", __func__);
+		printk(KERN_ERR "%s %s: mcp23s08_initialzie_reg() failed\n",
+			SPI_DRIVER_NAME, __func__);
 		return -1;
 	}
-	printk(KERN_DEBUG "%s: mcp23s08 probed", SPI_DRIVER_NAME);
+	printk(KERN_DEBUG "%s %s: mcp23s08 probed", SPI_DRIVER_NAME, __func__);
 
 	return 0;
 }
 
 static int mcp23s08_remove(struct spi_device *spi)
 {
-	printk("mcp23s08_remove\n");
-
 	// ドライバに紐付いたプライベートデータを取得
 	struct mcp23s08_drvdata *data;
 	data = (struct mcp23s08_drvdata *)spi_get_drvdata(spi);
 	// プライベートデータを開放
 	kfree(data);
 
-	printk(KERN_DEBUG "%s: mcp23s08 removed", SPI_DRIVER_NAME);
+	printk(KERN_DEBUG "%s %s: mcp23s08 removed", SPI_DRIVER_NAME, __func__);
 
 	return 0;
 }
@@ -252,7 +212,7 @@ static void spi_remove_device(struct spi_master *master, unsigned int cs)
 	}
 }
 
-int register_spi_dev(void)
+int register_mcp23s08_driver(void)
 {
 	// SPIドライバをカーネルに登録
 	spi_register_driver(&mcp23s08_driver);
@@ -263,7 +223,8 @@ int register_spi_dev(void)
 	// SPIバス番号に紐付いたマスターを取得
 	struct spi_master *master = spi_busnum_to_master(mcp23s08_info.bus_num);
 	if (!master) {
-		printk(KERN_ERR "%s: spi_busnum_to_master returned NULL\n", __func__);
+		printk(KERN_ERR "%s %s: spi_busnum_to_master returned NULL\n",
+			SPI_DRIVER_NAME, __func__);
 		spi_unregister_driver(&mcp23s08_driver);
 		return -1;
 	}
@@ -276,7 +237,8 @@ int register_spi_dev(void)
 	// 成功した直後、mcp23s08_driverのprobeが実行される
 	struct spi_device *spi_device = spi_new_device(master, &mcp23s08_info);
 	if (!spi_device) {
-		printk(KERN_ERR "%s: spi_new_device returned NULL\n", __func__);
+		printk(KERN_ERR "%s %s: spi_new_device returned NULL\n",
+			SPI_DRIVER_NAME, __func__);
 		spi_unregister_driver(&mcp23s08_driver);
 		return -1;
 	}
@@ -284,191 +246,32 @@ int register_spi_dev(void)
 	return 0;
 }
 
-void unregister_spi_dev(void)
+void unregister_mcp23s08_driver(void)
 {
 	// SPIバス番号に紐付いたマスターを取得
 	struct spi_master *master = spi_busnum_to_master(mcp23s08_info.bus_num);
 	if(master) {
 		spi_remove_device(master, mcp23s08_info.chip_select);
 	}else{
-		printk(KERN_ERR "mcp23s08 remove error\n");
+		printk(KERN_ERR "%s %s: mcp23s08 remove error\n",
+			SPI_DRIVER_NAME, __func__);
 	}
 
 	// カーネルからドライバを取り除く
 	spi_unregister_driver(&mcp23s08_driver);
 }
 
-// ---------- Push switches functions ----------
-
-static int pushsw_open(struct inode *inode, struct file *filep)
+// MCP23S08のGPIOの値を取得
+// 失敗した場合は-1を返す
+int mcp23s08_read_gpio(const unsigned char gpio_num)
 {
-	printk(KERN_DEBUG "pushsw_open\n");
-
-	struct pushsw_device_info *dev_info;
-	// container_of(メンバーへのポインタ, 構造体の型, 構造体メンバの名前)
-	dev_info = container_of(inode->i_cdev, struct pushsw_device_info, cdev);
-
-	dev_info->device_major = MAJOR(inode->i_rdev);
-	dev_info->device_minor = MINOR(inode->i_rdev);
-
-	switch(dev_info->device_minor) {
-	case 0:
-		dev_info->target_gpio_num = MCP23S08_GPIO_PUSHSW0;
-		break;
-	case 1:
-		dev_info->target_gpio_num = MCP23S08_GPIO_PUSHSW1;
-		break;
-	case 2:
-		dev_info->target_gpio_num = MCP23S08_GPIO_PUSHSW2;
-		break;
-	case 3:
-		dev_info->target_gpio_num = MCP23S08_GPIO_PUSHSW3;
-		break;
-	default:
-		dev_info->target_gpio_num = 0;
-	}
-
-	filep->private_data = dev_info;
-
-	return 0;
-}
-
-static int pushsw_release(struct inode *inode, struct file *filep)
-{
-	printk(KERN_DEBUG "pushsw_close\n");
-
-	// デバイスによっては何もしなかったりする
-	// kfree(filep->private_data);
-	return 0;
-}
-
-static ssize_t pushsw_read(struct file *filep, char __user *buf, size_t count,
-			     loff_t *f_pos)
-{
-	struct pushsw_device_info *dev_info = filep->private_data;
-	// オフセットがあったら正常終了する
-	// 短い文字列しかコピーしないので、これで問題なし
-	// 長い文字列をコピーするばあいは、オフセットが重要
-	if (*f_pos > 0) {
-		return 0;  // EOF
-	}
-
-	int gpio_value = mcp23s08_read_gpio(dev_info->target_gpio_num);
-	if (gpio_value < 0){
-		printk(KERN_ERR "%s: mcp23s08_read_gpio() failed.\n", __func__);
-		return 0;
-	}
-
-	unsigned char buffer[MAX_BUFLEN];
-	sprintf(buffer, "%d\n", gpio_value);
-
-	count = strlen(buffer);
-
-	// pushswドライバがもつテキスト情報をユーザ空間へコピーする
-	// copy_to_userで、buf宛に、dev_info->bufferのデータを、countバイトコピーする
-	// コピーできなかったバイト数が返り値で渡される
-	if (copy_to_user((void *)buf, &buffer, count)) {
-		printk(KERN_ERR "%s: copy_to_user() failed.\n", __func__);
+	unsigned char txdata = 0;
+	unsigned char rxdata = 0;
+	if(mcp23s08_control_reg(MCP23S08_REG_GPIO, MCP23S08_READ, txdata, &rxdata)){
+		printk(KERN_ERR "%s %s: failed to read GPIO.\n",
+			SPI_DRIVER_NAME, __func__);
 		return -1;
 	}
-	*f_pos += count;
 
-    return count;
-}
-
-static struct file_operations pushsw_fops = {
-    .open = pushsw_open,
-    .release = pushsw_release,
-    .read = pushsw_read,
-};
-
-static int register_pushsw_dev(void)
-{
-	int retval;
-	dev_t dev;
-
-	// 動的にメジャー番号を確保する
-	retval = alloc_chrdev_region(&dev, PUSHSW_BASE_MINOR, PUSHSW_MAX_MINORS, PUSHSW_DEVICE_NAME);
-	if (retval < 0) {
-		// 確保できなかったらエラーを返して終了
-		printk(KERN_ERR "%s: unable to allocate device number\n", PUSHSW_DEVICE_NAME);
-		return retval;
-	}
-
-	// デバイスのクラスを登録する(/sys/class/***/ を作成)
-	// ドライバが動いてる最中はクラスを保持するため、クラスはグローバル変数である
-	pushsw_class	= class_create(THIS_MODULE, PUSHSW_DEVICE_NAME);
-	if (IS_ERR(pushsw_class)) {
-		// 登録できなかったらエラー処理に移動する
-		retval = PTR_ERR(pushsw_class);
-		printk(KERN_ERR "%s: class creation failed\n", PUSHSW_DEVICE_NAME);
-		goto failed_class_create;
-	}
-
-	// マイナー番号ごとに(デバイスの数だけ)、ドライバの登録をする
-	pushsw_major = MAJOR(dev);
-	for (int i = 0; i < PUSHSW_MAX_MINORS; i++){
-		// ドライバの初期化する
-		// file_operationを登録するので、ここでドライバの機能が決まる
-		cdev_init(&stored_device_info[i].cdev, &pushsw_fops);
-		stored_device_info[i].cdev.owner = THIS_MODULE;
-
-		// ドライバをカーネルへ登録する
-		// 同じドライバを複数作成するときは、cdev_add(*,*, 3)みたいに末尾の数値を増やす
-		// 今回はドライバごとにメモリを確保したいので、cdev_add()自体を複数回実行する
-		retval = cdev_add(&stored_device_info[i].cdev,
-			MKDEV(pushsw_major, PUSHSW_BASE_MINOR + i), 1);
-		if (retval < 0) {
-			// 登録できなかったらエラー処理へ移動する
-			printk(KERN_ERR "%s: minor=%d: chardev registration failed\n",
-				PUSHSW_DEVICE_NAME, PUSHSW_BASE_MINOR + i);
-			goto failed_cdev_add;
-		}
-
-		// ドライバによっては、ここでエラー検出してたりしてなかったりする
-		device_create(pushsw_class, NULL, MKDEV(pushsw_major, PUSHSW_BASE_MINOR + i),
-			NULL, "%s%u", PUSHSW_DEVICE_NAME, i);
-	}
-
-	return 0;
-
-failed_cdev_add:
-	class_destroy(pushsw_class);
-failed_class_create:
-	unregister_chrdev_region(MKDEV(pushsw_major, PUSHSW_BASE_MINOR), PUSHSW_MAX_MINORS);
-	return retval;
-}
-
-static void unregister_pushsw_dev(void){
-	// 基本的にはregister_pushsw_devの逆の手順でメモリを開放していく
-	for (int i = 0; i < PUSHSW_MAX_MINORS; i++){
-		device_destroy(pushsw_class, MKDEV(pushsw_major, PUSHSW_BASE_MINOR + i));
-		cdev_del(&stored_device_info[i].cdev);
-	}
-	class_destroy(pushsw_class);
-	unregister_chrdev_region(MKDEV(pushsw_major, PUSHSW_BASE_MINOR), PUSHSW_MAX_MINORS);
-}
-
-// ---------- Functions as a library----------
-
-int register_devfiles_for_mcp23s08(void)
-{
-	int retval;
-	retval = register_spi_dev();
-	if(retval){
-		printk(KERN_ERR "%s: register_spi_dev() failed.\n", __func__);
-		return retval;
-	}
-	retval = register_pushsw_dev();
-	if(retval){
-		printk(KERN_ERR "%s: register_pushsw_dev() failed.\n", __func__);
-		return retval;
-	}
-	return retval;
-}
-
-void unregister_devfiles_for_mcp23s08(void)
-{
-	unregister_spi_dev();
-	unregister_pushsw_dev();
+	return (rxdata >> gpio_num) & 1;
 }

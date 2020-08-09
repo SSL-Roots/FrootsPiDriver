@@ -15,25 +15,28 @@ MODULE_LICENSE("GPL");
 
 extern int register_hello_dev(void);
 extern void unregister_hello_dev(void);
-extern int register_devfiles_for_mcp23s08(void);
-extern void unregister_devfiles_for_mcp23s08(void);
+extern int register_mcp23s08_driver(void);
+extern void unregister_mcp23s08_driver(void);
+extern int register_pushsw_dev(void);
+extern void unregister_pushsw_dev(void);
 
 static int frootspi_init(void)
 {
-	printk("frootspi_init\n");
-
 	register_hello_dev();
-	register_devfiles_for_mcp23s08();
 
+	if(register_mcp23s08_driver()){
+		printk(KERN_ERR "%s: register_mcp23s08_driver() failed.\n", __func__);
+	}else{
+		register_pushsw_dev();
+	}
 	return 0;
 }
 
 static void frootspi_exit(void)
 {
-	printk("frootspi_exit\n");
-
 	unregister_hello_dev();
-	unregister_devfiles_for_mcp23s08();
+	unregister_pushsw_dev();
+	unregister_mcp23s08_driver();
 }
 
 module_init(frootspi_init);
