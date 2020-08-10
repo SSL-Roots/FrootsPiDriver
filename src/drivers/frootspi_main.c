@@ -21,6 +21,8 @@ extern int register_pushsw_dev(void);
 extern void unregister_pushsw_dev(void);
 extern int register_led_dev(void);
 extern void unregister_led_dev(void);
+extern int register_dipsw_dev(void);
+extern void unregister_dipsw_dev(void);
 
 static int frootspi_init(void)
 {
@@ -30,6 +32,7 @@ static int frootspi_init(void)
 		printk(KERN_ERR "%s: register_mcp23s08_driver() failed.\n", __func__);
 	}else{
 		register_pushsw_dev();
+		register_dipsw_dev();
 		register_led_dev();
 	}
 	return 0;
@@ -39,6 +42,7 @@ static void frootspi_exit(void)
 {
 	unregister_hello_dev();
 	unregister_pushsw_dev();
+	unregister_dipsw_dev();
 	unregister_led_dev();
 	unregister_mcp23s08_driver();
 }
