@@ -41,5 +41,5 @@ $ sudo rmmod frootspi
 ```bash
 $ sudo apt install clang-format
 $ cd FrootsPiDriver/srd/driver
-$ clang-format -i frootspi-main.c
+$ clang-format -i frootspi_main.c
 ```

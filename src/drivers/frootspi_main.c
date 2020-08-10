@@ -1,17 +1,12 @@
 // SPDX-License-Identifier: GPL-2.0
 
-#include <linux/cdev.h>  // cdev_*()
-// #include <linux/device.h>
-#include <linux/fs.h>  // struct file, open, release
-// #include <linux/init.h>
-// #include <linux/kernel.h>
+#include <linux/cdev.h>	   // cdev_*()
+#include <linux/fs.h>	   // struct file, open, release
 #include <linux/module.h>  // module_*()
-// #include <linux/sched.h>
-#include <linux/slab.h>  // kmalloc()
-// #include <linux/types.h>
-#include <linux/uaccess.h>  // copy_to_user()
+#include <linux/slab.h>	   // kmalloc()
+#include <linux/uaccess.h> // copy_to_user()
 
-MODULE_LICENSE("GPL");
+#define FROOTSPI_VERSION "0.1.0"
 
 extern int register_hello_dev(void);
 extern void unregister_hello_dev(void);
@@ -28,9 +23,10 @@ static int frootspi_init(void)
 {
 	register_hello_dev();
 
-	if(register_mcp23s08_driver()){
-		printk(KERN_ERR "%s: register_mcp23s08_driver() failed.\n", __func__);
-	}else{
+	if (register_mcp23s08_driver()) {
+		printk(KERN_ERR "%s: register_mcp23s08_driver() failed.\n",
+			__func__);
+	} else {
 		register_pushsw_dev();
 		register_dipsw_dev();
 		register_led_dev();
@@ -46,6 +42,11 @@ static void frootspi_exit(void)
 	unregister_led_dev();
 	unregister_mcp23s08_driver();
 }
+
+MODULE_AUTHOR("Shota Akoi <macakasit@gmail.com>");
+MODULE_DESCRIPTION("FrootsPi /dev entries driver ");
+MODULE_LICENSE("GPL");
+MODULE_VERSION(FROOTSPI_VERSION);
 
 module_init(frootspi_init);
 module_exit(frootspi_exit);

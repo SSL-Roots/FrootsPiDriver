@@ -1,8 +1,19 @@
-# Ref:https://github.com/rt-net/RaspberryPiMouse/blob/master/src/drivers/.clang-format
+# Ref:https://www.kernel.org/doc/html/latest/process/coding-style.html
+# Ref:https://clang.llvm.org/docs/ClangFormatStyleOptions.html
 
 BasedOnStyle: LLVM
+
+# 1) Indentation
 IndentWidth: 8
 UseTab: Always
+AllowShortFunctionsOnASingleLine: None
+AllowShortIfStatementsOnASingleLine: Never
+AlignAfterOpenBracket: DontAlign
+ContinuationIndentWidth: 8
+
+# 2) Breaking long lines and strings
+ColumnLimit: 80
+
+# 3) Placing Braces and Spaces
 BreakBeforeBraces: Linux
-AllowShortIfStatementsOnASingleLine: false
 IndentCaseLabels: false

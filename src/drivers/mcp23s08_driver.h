@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 
 #define MCP23S08_GPIO_LED 0
 #define MCP23S08_GPIO_PUSHSW0 1
