@@ -3,12 +3,14 @@
 #include <linux/cdev.h>	   // cdev_*()
 #include <linux/fs.h>	   // struct file, open, release
 #include <linux/uaccess.h> // copy_to_user()
+#include <linux/gpio.h>  // gpio_*()
 
 #include "mcp23s08_driver.h"
 
 #define PUSHSW_MAX_BUFLEN 64 // copy_to_user用のバッファサイズ
 #define PUSHSW_BASE_MINOR 0
-#define PUSHSW_MAX_MINORS 4
+#define PUSHSW_MAX_MINORS 5
+#define PUSHSW_GPIO_PIN_SDSW 23
 #define PUSHSW_DEVICE_NAME "frootspi_pushsw"
 
 static struct class *pushsw_class;
@@ -46,6 +48,9 @@ static int pushsw_open(struct inode *inode, struct file *filep)
 	case 3:
 		dev_info->target_gpio_num = MCP23S08_GPIO_PUSHSW3;
 		break;
+	case 4:
+		gpio_direction_input(PUSHSW_GPIO_PIN_SDSW);  // 入力ピンに設定
+		break;
 	default:
 		dev_info->target_gpio_num = 0;
 	}
@@ -79,11 +84,17 @@ static ssize_t pushsw_read(
 		return 0; // EOF
 	}
 
-	int gpio_value = mcp23s08_read_gpio(dev_info->target_gpio_num);
-	if (gpio_value < 0) {
-		printk(KERN_ERR "%s %s: mcp23s08_read_gpio() failed.\n",
-			PUSHSW_DEVICE_NAME, __func__);
-		return 0;
+	int gpio_value = 0;
+	if(dev_info->device_minor < 4){
+		gpio_value = mcp23s08_read_gpio(dev_info->target_gpio_num);
+		if (gpio_value < 0) {
+			printk(KERN_ERR "%s %s: mcp23s08_read_gpio() failed.\n",
+				PUSHSW_DEVICE_NAME, __func__);
+			return 0;
+		}
+	}else{
+		// 物理ピンを読む
+		gpio_value = gpio_get_value(PUSHSW_GPIO_PIN_SDSW);
 	}
 
 	unsigned char buffer[PUSHSW_MAX_BUFLEN];
