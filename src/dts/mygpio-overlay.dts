@@ -1,0 +1,22 @@
+// Ref: https://github.com/fivdi/onoff/wiki/Enabling-Pullup-and-Pulldown-Resistors-on-The-Raspberry-Pi
+
+/dts-v1/;
+/plugin/;
+
+/ {
+	compatible = "brcm,bcm2835";
+
+	fragment@0 {
+		target = <&gpio>;
+		__overlay__ {
+			pinctrl-names = "default";
+            pinctrl-0 = <&my_pins>;
+
+			my_pins: my_pins{
+				brcm,pins = <23>;  // pin
+				brcm,function = <0>; // 0:in, 1:out
+                brcm,pull = <0>;  // 0:none, 1:pd, 2:pu
+			};
+		};
+	};
+};

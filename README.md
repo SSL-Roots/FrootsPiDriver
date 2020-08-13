@@ -16,12 +16,16 @@ $ sudo vim /boot/firmware/usercfg.txt`
    enable_uart=0
    dtoverlay=spi1-3cs
    dtoverlay=pi3-disable-bt
+   dtoverlay=mygpio
 ```
 
 `enable_uart=0`でUARTをオフしないと、FrootsPi基板接続じにシリアルコンソールが起動してしまい、ログインできません。
 
 `dtoverlay=spi1-3cs`と`dtoverlay=pi3-disable-bt`は、SPI1を使用するために必要です。
 SPI1が使用できる代わりに**Bluetoothが使えなくなります**。
+
+`dtoverlay=mygpio`はGPIOのプルアップ/プルダウンを設定するために必要です。
+後ほど`mygpio.dtbo`を生成し、`/boot/firmware/overlays/`にコピーするスクリプトを実行します。
 
 ### FrootsPiDriverをインストールする（簡単）
 
@@ -52,6 +56,14 @@ $ dmesg
 
 # モジュールのアンインストール
 $ sudo rmmod frootspi
+```
+
+### GPIOのプルアップとプルダウンを設定する
+
+```bash
+$ cd FrootsPiDriver/utils
+$ ./install_dtbo.bash
+$ sudo reboot
 ```
 
 ## DeviceFiles
