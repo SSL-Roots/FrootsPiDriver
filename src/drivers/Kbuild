@@ -2,6 +2,7 @@
 
 obj-m  := frootspi.o
 frootspi-y := frootspi_main.o frootspi_hello.o mcp23s08_driver.o \
-              frootspi_pushsw.o frootspi_dipsw.o frootspi_led.o
+              frootspi_pushsw.o frootspi_dipsw.o frootspi_led.o \
+              aqm0802a_driver.o
 
 ccflags-y := -std=gnu99 -Werror -Wall -Wno-declaration-after-statement

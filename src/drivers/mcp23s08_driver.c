@@ -173,7 +173,7 @@ static int mcp23s08_probe(struct spi_device *spi)
 			SPI_DRIVER_NAME, __func__);
 		return -1;
 	}
-	printk(KERN_DEBUG "%s %s: mcp23s08 probed", SPI_DRIVER_NAME, __func__);
+	printk(KERN_DEBUG "%s %s: mcp23s08 probed.\n", SPI_DRIVER_NAME, __func__);
 
 	return 0;
 }
@@ -186,7 +186,7 @@ static int mcp23s08_remove(struct spi_device *spi)
 	// プライベートデータを開放
 	kfree(data);
 
-	printk(KERN_DEBUG "%s %s: mcp23s08 removed", SPI_DRIVER_NAME, __func__);
+	printk(KERN_DEBUG "%s %s: mcp23s08 removed.\n", SPI_DRIVER_NAME, __func__);
 
 	return 0;
 }

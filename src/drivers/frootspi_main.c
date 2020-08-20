@@ -18,6 +18,8 @@ extern int register_led_dev(void);
 extern void unregister_led_dev(void);
 extern int register_dipsw_dev(void);
 extern void unregister_dipsw_dev(void);
+extern int register_aqm0802a_driver(void);
+extern void unregister_aqm0802a_driver(void);
 
 static int frootspi_init(void)
 {
@@ -31,16 +33,20 @@ static int frootspi_init(void)
 		register_dipsw_dev();
 		register_led_dev();
 	}
+	register_aqm0802a_driver();
 	return 0;
 }
 
 static void frootspi_exit(void)
 {
 	unregister_hello_dev();
+
 	unregister_pushsw_dev();
 	unregister_dipsw_dev();
 	unregister_led_dev();
 	unregister_mcp23s08_driver();
+
+	unregister_aqm0802a_driver();
 }
 
 MODULE_AUTHOR("Shota Akoi <macakasit@gmail.com>");
