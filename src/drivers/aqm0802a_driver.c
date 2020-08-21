@@ -5,9 +5,8 @@
 #include <linux/module.h>  // MODULE_DEVICE_TABLE()
 
 #define I2C_DRIVER_NAME "frootspi_aqm0802a_driver"
-
-#define CONTROL_COMMAND_BYTE 0x00
-#define CONTROL_DATA_BYTE 0x40
+#define WAIT_TIME_USEC_MIN 27
+#define WAIT_TIME_USEC_MAX 100
 
 // デバイスを識別するテーブル { "name", "好きなデータ"}を追加する
 // カーネルはこの"name"をもとに対応するデバイスドライバを探す
@@ -18,12 +17,12 @@ static struct i2c_device_id aqm0802a_id_table[] = {
 MODULE_DEVICE_TABLE(i2c, aqm0802a_id_table);
 
 // I2Cドライバの設定に使われる構造体
-
 static struct i2c_board_info aqm0802a_info = {
 	I2C_BOARD_INFO("aqm0802a", 0x3e)
 };
 
-// こいつ存在する意味あるんか・・・？
+// I2Cクライアント
+// 生成・削除するためにグローバル変数として記憶する
 static struct i2c_client *aqm0802a_client = NULL;
 
 // I2C通信に使うデータをまとめた構造体
@@ -35,6 +34,7 @@ struct aqm0802a_drvdata{
 static int aqm0802a_write_command_byte(struct i2c_client *client,
 	const unsigned char data)
 {
+	const unsigned char CONTROL_COMMAND_BYTE = 0x00;
 	int retval = i2c_smbus_write_byte_data(client, CONTROL_COMMAND_BYTE, data);
 	if(retval < 0){
 		printk(KERN_ERR "%s %s: write_byte_data 0x%x failed. error: %d\n",
@@ -42,21 +42,7 @@ static int aqm0802a_write_command_byte(struct i2c_client *client,
 			data, retval);
 		return -1;
 	}
-	usleep_range(27, 100);
-	return 0;
-}
-
-static int aqm0802a_write_data_byte(struct i2c_client *client,
-	const unsigned char data)
-{
-	int retval = i2c_smbus_write_byte_data(client, CONTROL_DATA_BYTE, data);
-	if(retval < 0){
-		printk(KERN_ERR "%s %s: write_byte_data 0x%x failed. error: %d\n",
-			I2C_DRIVER_NAME, __func__,
-			data, retval);
-		return -1;
-	}
-	usleep_range(27, 100);
+	usleep_range(WAIT_TIME_USEC_MIN, WAIT_TIME_USEC_MAX);
 	return 0;
 }
 
@@ -185,6 +171,58 @@ static int aqm0802a_set_address(struct i2c_client *client,
 	}
 }
 
+static int aqm0802a_write_data_byte(struct i2c_client *client,
+	const unsigned char data)
+{
+	const unsigned char CONTROL_DATA_BYTE = 0x40;
+	int retval = i2c_smbus_write_byte_data(client, CONTROL_DATA_BYTE, data);
+	if(retval < 0){
+		printk(KERN_ERR "%s %s: write_byte_data 0x%x failed. error: %d\n",
+			I2C_DRIVER_NAME, __func__,
+			data, retval);
+		return -1;
+	}
+	usleep_range(WAIT_TIME_USEC_MIN, WAIT_TIME_USEC_MAX);
+	return 0;
+}
+
+static int aqm0802a_write_line(struct i2c_client *client,
+	const unsigned char second_line, char *text)
+{
+	// LCDの1行に文字列を書き込む関数
+	// 書き込む行(second_line = 0 or 1)を選択する
+	// アスキーコードと半角カタカナに対応。それ以外の文字は空白になる
+	// 2バイトや4バイト文字を入力されるとバグるので注意
+
+	if(second_line){
+		aqm0802a_set_address(client, 0x40);
+	}else{
+		aqm0802a_set_address(client, 0x00);
+	}
+
+	// 入力された文字のバイト数だけ繰り返す
+	size_t text_size = strlen(text);
+	for(int i = 0; i < text_size; i++){
+		unsigned char converted_char = 0xa0;  // 空白
+
+		if(text[i] < 0x7e){  // ASCII
+			// ASCIIなのでそのまま書き込める
+			converted_char = text[i];
+		}else if(text[i] == 0xef){  // 半角カタカナ
+			if(text[i+1] == 0xbd){
+				converted_char = text[i+2];
+			}else if(text[i+1] == 0xbe){
+				converted_char = text[i+2] + 0x40;
+			}
+			i += 2;  // 3バイト文字なので、その分インクリメントする
+		}
+		
+		aqm0802a_write_data_byte(client, converted_char);
+	}
+
+	return 0;
+}
+
 static int aqm0802a_init_device(struct i2c_client *client)
 {
 	// AQM0802Aの初期設定
@@ -231,23 +269,10 @@ static int aqm0802a_probe(struct i2c_client *client, const struct i2c_device_id 
 	i2c_set_clientdata(client, data);
 	mutex_init(&data->my_mutex);
 
+	// LCDの初期化
 	aqm0802a_init_device(client);
-	aqm0802a_set_address(client, 0x00);
-	aqm0802a_write_data_byte(client, 0x46);  // F
-	aqm0802a_write_data_byte(client, 0x72);  // r
-	aqm0802a_write_data_byte(client, 0x6f);  // o
-	aqm0802a_write_data_byte(client, 0x6f);  // o
-	aqm0802a_write_data_byte(client, 0x74);  // t
-	aqm0802a_write_data_byte(client, 0x73);  // s
-	aqm0802a_write_data_byte(client, 0x50);  // P
-	aqm0802a_write_data_byte(client, 0x69);  // i
-
-	aqm0802a_set_address(client, 0x40);
-	aqm0802a_write_data_byte(client, 0xc3);  // テ
-	aqm0802a_write_data_byte(client, 0xa8);  // ィ
-	aqm0802a_write_data_byte(client, 0xaf);  // ッ
-	aqm0802a_write_data_byte(client, 0xb9);  // ケ
-	aqm0802a_write_data_byte(client, 0xb0);  // ー
+	aqm0802a_write_line(client, 0, "FrootsPi");
+	aqm0802a_write_line(client, 1, "ﾌﾙｰﾂﾊﾟｲ!");
 
 	return 0;
 }
@@ -278,7 +303,6 @@ int register_aqm0802a_driver(void)
 {
 	printk(KERN_INFO "%s %s: register.\n", I2C_DRIVER_NAME, __func__);
 	// I2Cドライバをカーネルに登録
-
 
 	int retval = i2c_add_driver(&aqm0802a_driver);
 	if(retval){
