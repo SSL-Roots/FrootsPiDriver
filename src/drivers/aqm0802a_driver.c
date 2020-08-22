@@ -1,13 +1,20 @@
 // SPDX-License-Identifier: GPL-2.0
 
+#include <linux/cdev.h>	   // cdev_*()
 #include <linux/delay.h>  // usleep();
+#include <linux/fs.h>	   // struct file, open, release
 #include <linux/i2c.h> // i2c_*()
 #include <linux/module.h>  // MODULE_DEVICE_TABLE()
+#include <linux/uaccess.h> // copy_to_user()
 
 #define I2C_DRIVER_NAME "frootspi_aqm0802a_driver"
 #define WAIT_TIME_USEC_MIN 27
 #define WAIT_TIME_USEC_MAX 100
+#define LCD_BASE_MINOR 0
+#define LCD_MAX_MINORS 1
+#define LCD_DEVICE_NAME "frootspi_lcd"
 
+// ---------- I2Cドライバ用 ----------
 // デバイスを識別するテーブル { "name", "好きなデータ"}を追加する
 // カーネルはこの"name"をもとに対応するデバイスドライバを探す
 static struct i2c_device_id aqm0802a_id_table[] = {
@@ -25,11 +32,151 @@ static struct i2c_board_info aqm0802a_info = {
 // 生成・削除するためにグローバル変数として記憶する
 static struct i2c_client *aqm0802a_client = NULL;
 
-// I2C通信に使うデータをまとめた構造体
-struct aqm0802a_drvdata{
+// ---------- I2Cドライバ、キャラクタデバイス共用 ----------
+struct lcd_device_info {
+	// ここはある程度自由に定義できる
+	struct cdev cdev;
+	struct class *device_class;
+	unsigned int device_major;
+	unsigned int device_minor;
 	struct i2c_client *client;
 	struct mutex my_mutex;
 };
+
+
+// キャラクタデバイスで使うAQM0802Aの関数は前方宣言する
+static int aqm0802a_write_lines(struct i2c_client *client, char *text);
+
+static int lcd_open(struct inode *inode, struct file *filep)
+{
+	struct lcd_device_info *dev_info;
+	// container_of(メンバーへのポインタ, 構造体の型, 構造体メンバの名前)
+	dev_info = container_of(inode->i_cdev, struct lcd_device_info, cdev);
+
+	if (dev_info == NULL || dev_info->client == NULL){
+		printk(KERN_ERR "%s %s: dev_info or dev_info->client is NULL.\n",
+			LCD_DEVICE_NAME, __func__);
+	}
+
+	// ここに何かしらのエラー処理がいるかも
+
+	dev_info->device_minor = MINOR(inode->i_rdev);
+	filep->private_data = dev_info;
+
+	printk(KERN_DEBUG "%s %s: lcd device opend.\n", LCD_DEVICE_NAME,
+		__func__);
+	return 0;
+}
+
+static int lcd_release(struct inode *inode, struct file *filep)
+{
+	// デバイスによっては何もしなかったりする
+	// kfree(filep->private_data);
+	printk(KERN_DEBUG "%s %s: lcd device closed.\n", LCD_DEVICE_NAME,
+		__func__);
+
+	return 0;
+}
+
+static ssize_t lcd_write(
+	struct file *filep, const char __user *buf, size_t count, loff_t *f_pos)
+{
+	struct lcd_device_info *dev_info = filep->private_data;
+	struct i2c_client *client = dev_info->client;
+
+	unsigned char text_buffer[255];
+
+	if (copy_from_user(text_buffer, buf, count) != 0) {
+		printk(KERN_ERR "%s %s: copy_from_user() failed.\n",
+			LCD_DEVICE_NAME, __func__);
+		return -1;
+	}
+
+	// 1行書き込む
+	aqm0802a_write_lines(client, text_buffer);
+
+	return count;
+}
+
+static struct file_operations lcd_fops = {
+	.open = lcd_open,
+	.release = lcd_release,
+	.write = lcd_write,
+};
+
+static int register_lcd_dev(struct lcd_device_info *dev_info)
+{
+	int retval;
+	dev_t dev;
+
+	// 動的にメジャー番号を確保する
+	retval = alloc_chrdev_region(
+		&dev, LCD_BASE_MINOR, LCD_MAX_MINORS, LCD_DEVICE_NAME);
+	if (retval < 0) {
+		// 確保できなかったらエラーを返して終了
+		printk(KERN_ERR "%s %s: unable to allocate device number\n",
+			LCD_DEVICE_NAME, __func__);
+		return retval;
+	}
+
+	// マイナー番号ごとに(デバイスの数だけ)、ドライバの登録をする
+	dev_info->device_major = MAJOR(dev);
+
+	// デバイスのクラスを登録する(/sys/class/***/ を作成)
+	// ドライバが動いてる最中はクラスを保持するため、クラスはグローバル変数である
+	dev_info->device_class = class_create(THIS_MODULE, LCD_DEVICE_NAME);
+	if (IS_ERR(dev_info->device_class)) {
+		// 登録できなかったらエラー処理に移動する
+		retval = PTR_ERR(dev_info->device_class);
+		printk(KERN_ERR "%s %s: class creation failed\n",
+			LCD_DEVICE_NAME, __func__);
+		goto failed_class_create;
+	}
+	// ドライバの初期化する
+	// file_operationを登録するので、ここでドライバの機能が決まる
+	cdev_init(&dev_info->cdev, &lcd_fops);
+	dev_info->cdev.owner = THIS_MODULE;
+
+	// ドライバをカーネルへ登録する
+	// 同じドライバを複数作成するときは、cdev_add(*,*,
+	// 3)みたいに末尾の数値を増やす
+	// 今回はドライバごとにメモリを確保したいので、cdev_add()自体を複数回実行する
+	retval = cdev_add(&dev_info->cdev,
+		MKDEV(dev_info->device_major, LCD_BASE_MINOR), 1);
+	if (retval < 0) {
+		// 登録できなかったらエラー処理へ移動する
+		printk(KERN_ERR "%s %s: minor=%d: chardev registration "
+				"failed\n",
+			LCD_DEVICE_NAME, __func__,
+			LCD_BASE_MINOR);
+		goto failed_cdev_add;
+	}
+
+	// ドライバによっては、ここでエラー検出してたりしてなかったりする
+	device_create(dev_info->device_class, NULL,
+		MKDEV(dev_info->device_major, LCD_BASE_MINOR), NULL, "%s%u",
+		LCD_DEVICE_NAME, LCD_BASE_MINOR);
+
+	return 0;
+
+failed_cdev_add:
+	class_destroy(dev_info->device_class);
+failed_class_create:
+	unregister_chrdev_region(
+		MKDEV(dev_info->device_major, LCD_BASE_MINOR), LCD_MAX_MINORS);
+	return retval;
+}
+
+void unregister_lcd_dev(struct lcd_device_info *dev_info)
+{
+	// 基本的にはregister_lcd_devの逆の手順でメモリを開放していく
+	device_destroy(
+		dev_info->device_class, MKDEV(dev_info->device_major, LCD_BASE_MINOR));
+	cdev_del(&dev_info->cdev);
+	class_destroy(dev_info->device_class);
+	unregister_chrdev_region(
+		MKDEV(dev_info->device_major, LCD_BASE_MINOR), LCD_MAX_MINORS);
+}
 
 static int aqm0802a_write_command_byte(struct i2c_client *client,
 	const unsigned char data)
@@ -186,24 +333,26 @@ static int aqm0802a_write_data_byte(struct i2c_client *client,
 	return 0;
 }
 
-static int aqm0802a_write_line(struct i2c_client *client,
-	const unsigned char second_line, char *text)
+static int aqm0802a_write_lines(struct i2c_client *client, char *text)
 {
-	// LCDの1行に文字列を書き込む関数
-	// 書き込む行(second_line = 0 or 1)を選択する
+	// LCDの全行に文字列を書き込む関数
+	// 文字列を書き込む前に、LCDの表示をクリアする
+	// textの中に改行コードが含まれていたら、書き込む行を変える
 	// アスキーコードと半角カタカナに対応。それ以外の文字は空白になる
 	// 2バイトや4バイト文字を入力されるとバグるので注意
 
-	if(second_line){
-		aqm0802a_set_address(client, 0x40);
-	}else{
-		aqm0802a_set_address(client, 0x00);
-	}
+	aqm0802a_clear_display(client);
+	aqm0802a_set_address(client, 0x00);
 
 	// 入力された文字のバイト数だけ繰り返す
 	size_t text_size = strlen(text);
 	for(int i = 0; i < text_size; i++){
 		unsigned char converted_char = 0xa0;  // 空白
+
+		if(text[i] == 0x0a){  // 改行
+			aqm0802a_set_address(client, 0x40);
+			continue;
+		}
 
 		if(text[i] < 0x7e){  // ASCII
 			// ASCIIなのでそのまま書き込める
@@ -258,30 +407,31 @@ static int aqm0802a_probe(struct i2c_client *client, const struct i2c_device_id 
 			 I2C_DRIVER_NAME, id->name, (int)(id->driver_data),
 			 client->addr);
 
-	struct aqm0802a_drvdata *data;
-	data = kzalloc(sizeof(struct aqm0802a_drvdata), GFP_KERNEL);
-	if (data == NULL) {
+	struct lcd_device_info *dev_info;
+	dev_info = kzalloc(sizeof(struct lcd_device_info), GFP_KERNEL);
+	if (dev_info == NULL) {
 		printk(KERN_ERR "%s %s: kszalloc() failed\n", I2C_DRIVER_NAME,
 			__func__);
 		return -1;
 	}
-	data->client = client;
-	i2c_set_clientdata(client, data);
-	mutex_init(&data->my_mutex);
+	dev_info->client = client;
+	i2c_set_clientdata(client, dev_info);
+	mutex_init(&dev_info->my_mutex);
 
 	// LCDの初期化
 	aqm0802a_init_device(client);
-	aqm0802a_write_line(client, 0, "FrootsPi");
-	aqm0802a_write_line(client, 1, "ﾌﾙｰﾂﾊﾟｲ!");
+	aqm0802a_write_lines(client, "FrootsPI\nﾌﾙｰﾂﾊﾟｲ!");
 
-	return 0;
+	// キャラクタデバイスの登録
+	return register_lcd_dev(dev_info);
 }
 
 static int aqm0802a_remove(struct i2c_client *client)
 {
-	struct aqm0802a_drvdata *data;
-	data = i2c_get_clientdata(client);
-	kfree(data);
+	struct lcd_device_info *dev_info;
+	dev_info = i2c_get_clientdata(client);
+	unregister_lcd_dev(dev_info);
+	kfree(dev_info);
 
 	printk(KERN_INFO "%s %s: i2c device removed.\n",
 		I2C_DRIVER_NAME, __func__);
