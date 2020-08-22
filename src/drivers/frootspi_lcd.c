@@ -449,7 +449,7 @@ static struct i2c_driver aqm0802a_driver = {
 	.remove = aqm0802a_remove,
 };
 
-int register_aqm0802a_driver(void)
+int register_aqm0802a_driver_and_lcd_dev(void)
 {
 	printk(KERN_INFO "%s %s: register.\n", I2C_DRIVER_NAME, __func__);
 	// I2Cドライバをカーネルに登録
@@ -468,7 +468,7 @@ int register_aqm0802a_driver(void)
 	return 0;
 }
 
-void unregister_aqm0802a_driver(void)
+void unregister_aqm0802a_driver_and_lcd_dev(void)
 {
 	printk(KERN_INFO "%s %s: unregister.\n", I2C_DRIVER_NAME, __func__);
 	i2c_del_driver(&aqm0802a_driver);
