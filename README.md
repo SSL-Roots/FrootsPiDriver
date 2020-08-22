@@ -16,6 +16,7 @@ $ sudo vim /boot/firmware/usercfg.txt`
    enable_uart=0
    dtoverlay=spi1-3cs
    dtoverlay=pi3-disable-bt
+   dtparam=i2c_baudrate=100000
    dtoverlay=mygpio
 ```
 
@@ -23,6 +24,9 @@ $ sudo vim /boot/firmware/usercfg.txt`
 
 `dtoverlay=spi1-3cs`と`dtoverlay=pi3-disable-bt`は、SPI1を使用するために必要です。
 SPI1が使用できる代わりに**Bluetoothが使えなくなります**。
+
+`dtparam=i2c_baudrate=100000`はI2Cのクロック周波数を100kHzにします。
+周波数の適正値は調査中です。
 
 `dtoverlay=mygpio`はGPIOのプルアップ/プルダウンを設定するために必要です。
 後ほど`mygpio.dtbo`を生成し、`/boot/firmware/overlays/`にコピーするスクリプトを実行します。
@@ -114,13 +118,28 @@ $ echo 1 > /dev/frootspi_led0
 $ echo 0 > /dev/frootspi_led0
 ```
 
+### LCD (/dev/frootspi_lcd0)
+
+LCDに文字を出力します。
+半角英数記号と半角カタカナに対応してます。
+改行コードを入れると2行目にも出力します。
+
+```sh
+# 使い方
+# エスケープシーケンスを使うためechoに -e オプションを付けます
+# 改行コードを書き込むため、teeコマンドを使います
+$ echo -e "FrootsPi\nﾌﾙｰﾂﾊﾟｲ" | tee /dev/frootspi_lcd0
+FrootsPi
+ﾌﾙｰﾂﾊﾟｲ
+```
+
 ## Development
 
 フォーマットを整える方法
 
 ```bash
 $ sudo apt install clang-format
-$ cd FrootsPiDriver/srd/driver
+$ cd FrootsPiDriver/src/driver
 $ clang-format -i frootspi_main.c
 ```
 
