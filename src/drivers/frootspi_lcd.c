@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0
 
 #include <linux/cdev.h>	   // cdev_*()
-#include <linux/delay.h>  // usleep();
+#include <linux/delay.h>   // usleep();
 #include <linux/fs.h>	   // struct file, open, release
-#include <linux/i2c.h> // i2c_*()
+#include <linux/i2c.h>	   // i2c_*()
 #include <linux/module.h>  // MODULE_DEVICE_TABLE()
 #include <linux/uaccess.h> // copy_to_user()
 
@@ -24,9 +24,7 @@ static struct i2c_device_id aqm0802a_id_table[] = {
 MODULE_DEVICE_TABLE(i2c, aqm0802a_id_table);
 
 // I2Cドライバの設定に使われる構造体
-static struct i2c_board_info aqm0802a_info = {
-	I2C_BOARD_INFO("aqm0802a", 0x3e)
-};
+static struct i2c_board_info aqm0802a_info = {I2C_BOARD_INFO("aqm0802a", 0x3e)};
 
 // I2Cクライアント
 // 生成・削除するためにグローバル変数として記憶する
@@ -43,7 +41,6 @@ struct lcd_device_info {
 	struct mutex my_mutex;
 };
 
-
 // キャラクタデバイスで使うAQM0802Aの関数は前方宣言する
 static int aqm0802a_write_lines(struct i2c_client *client, char *text);
 
@@ -53,8 +50,9 @@ static int lcd_open(struct inode *inode, struct file *filep)
 	// container_of(メンバーへのポインタ, 構造体の型, 構造体メンバの名前)
 	dev_info = container_of(inode->i_cdev, struct lcd_device_info, cdev);
 
-	if (dev_info == NULL || dev_info->client == NULL){
-		printk(KERN_ERR "%s %s: dev_info or dev_info->client is NULL.\n",
+	if (dev_info == NULL || dev_info->client == NULL) {
+		printk(KERN_ERR
+			"%s %s: dev_info or dev_info->client is NULL.\n",
 			LCD_DEVICE_NAME, __func__);
 	}
 
@@ -84,7 +82,7 @@ static ssize_t lcd_write(
 	struct lcd_device_info *dev_info = filep->private_data;
 	struct i2c_client *client = dev_info->client;
 
-	unsigned char text_buffer[255];
+	unsigned char text_buffer[255] = {0}; // 初期化しないと文字化けする
 
 	if (copy_from_user(text_buffer, buf, count) != 0) {
 		printk(KERN_ERR "%s %s: copy_from_user() failed.\n",
@@ -147,8 +145,7 @@ static int register_lcd_dev(struct lcd_device_info *dev_info)
 		// 登録できなかったらエラー処理へ移動する
 		printk(KERN_ERR "%s %s: minor=%d: chardev registration "
 				"failed\n",
-			LCD_DEVICE_NAME, __func__,
-			LCD_BASE_MINOR);
+			LCD_DEVICE_NAME, __func__, LCD_BASE_MINOR);
 		goto failed_cdev_add;
 	}
 
@@ -170,23 +167,24 @@ failed_class_create:
 void unregister_lcd_dev(struct lcd_device_info *dev_info)
 {
 	// 基本的にはregister_lcd_devの逆の手順でメモリを開放していく
-	device_destroy(
-		dev_info->device_class, MKDEV(dev_info->device_major, LCD_BASE_MINOR));
+	device_destroy(dev_info->device_class,
+		MKDEV(dev_info->device_major, LCD_BASE_MINOR));
 	cdev_del(&dev_info->cdev);
 	class_destroy(dev_info->device_class);
 	unregister_chrdev_region(
 		MKDEV(dev_info->device_major, LCD_BASE_MINOR), LCD_MAX_MINORS);
 }
 
-static int aqm0802a_write_command_byte(struct i2c_client *client,
-	const unsigned char data)
+static int aqm0802a_write_command_byte(
+	struct i2c_client *client, const unsigned char data)
 {
 	const unsigned char CONTROL_COMMAND_BYTE = 0x00;
-	int retval = i2c_smbus_write_byte_data(client, CONTROL_COMMAND_BYTE, data);
-	if(retval < 0){
-		printk(KERN_ERR "%s %s: write_byte_data 0x%x failed. error: %d\n",
-			I2C_DRIVER_NAME, __func__,
-			data, retval);
+	int retval =
+		i2c_smbus_write_byte_data(client, CONTROL_COMMAND_BYTE, data);
+	if (retval < 0) {
+		printk(KERN_ERR
+			"%s %s: write_byte_data 0x%x failed. error: %d\n",
+			I2C_DRIVER_NAME, __func__, data, retval);
 		return -1;
 	}
 	usleep_range(WAIT_TIME_USEC_MIN, WAIT_TIME_USEC_MAX);
@@ -194,8 +192,8 @@ static int aqm0802a_write_command_byte(struct i2c_client *client,
 }
 
 static int aqm0802a_set_function(struct i2c_client *client,
-	const unsigned char bus_8bit,
-	const unsigned char display_2line, const unsigned char double_height_font,
+	const unsigned char bus_8bit, const unsigned char display_2line,
+	const unsigned char double_height_font,
 	const unsigned char instruction_table)
 {
 	unsigned char data = 0x20;
@@ -203,13 +201,13 @@ static int aqm0802a_set_function(struct i2c_client *client,
 	data |= display_2line << 3;
 	data |= double_height_font << 2;
 	data |= instruction_table << 0;
-	
+
 	return aqm0802a_write_command_byte(client, data);
 }
 
 static int aqm0802a_set_osc_freq(struct i2c_client *client,
-	const unsigned char bias,
-	const unsigned char f2, const unsigned char f1, const unsigned char f0)
+	const unsigned char bias, const unsigned char f2,
+	const unsigned char f1, const unsigned char f0)
 {
 	// Instruction Table を1にしないと設定できない
 	// 内部クロックの周波数を決める
@@ -225,14 +223,14 @@ static int aqm0802a_set_osc_freq(struct i2c_client *client,
 }
 
 static int aqm0802a_set_contrast_lowbyte(struct i2c_client *client,
-	const unsigned char c3, const unsigned char c2,
-	const unsigned char c1, const unsigned char c0)
+	const unsigned char c3, const unsigned char c2, const unsigned char c1,
+	const unsigned char c0)
 {
 	// Instruction Table を1にしないと設定できない
 	// コントラスト(C5 ~ C0)のうちLow Byteをセットする
 	// 詳細はST7032のデータシートの表を見て
 	// https://strawberry-linux.com/pub/ST7032i.pdf
-	unsigned  char data = 0x70;
+	unsigned char data = 0x70;
 	data |= c3 << 3;
 	data |= c2 << 2;
 	data |= c1 << 1;
@@ -242,8 +240,7 @@ static int aqm0802a_set_contrast_lowbyte(struct i2c_client *client,
 }
 
 static int aqm0802a_set_power_and_contruct_highbits(struct i2c_client *client,
-	const unsigned char icon_display_on,
-	const unsigned char booster_on,
+	const unsigned char icon_display_on, const unsigned char booster_on,
 	const unsigned char c5, const unsigned char c4)
 {
 	// Instruction Table を1にしないと設定できない
@@ -261,9 +258,8 @@ static int aqm0802a_set_power_and_contruct_highbits(struct i2c_client *client,
 }
 
 static int aqm0802a_set_follower_control(struct i2c_client *client,
-	const unsigned char follower_on,
-	const unsigned char rab2, const unsigned char rab1,
-	const unsigned char rab0)
+	const unsigned char follower_on, const unsigned char rab2,
+	const unsigned char rab1, const unsigned char rab0)
 {
 	// Instruction Table を1にしないと設定できない
 	// ボルテージフォロワをON/OFFし、増幅率設定用の抵抗Rab2~0を設定する
@@ -276,13 +272,12 @@ static int aqm0802a_set_follower_control(struct i2c_client *client,
 	data |= rab0 << 0;
 
 	int retval = aqm0802a_write_command_byte(client, data);
-	msleep(200);  // 電源が安定するまで待機
+	msleep(200); // 電源が安定するまで待機
 	return retval;
 }
 
 static int aqm0802a_turn_on_display(struct i2c_client *client,
-	const unsigned char display_on,
-	const unsigned char cursor_on,
+	const unsigned char display_on, const unsigned char cursor_on,
 	const unsigned char cursor_blink_on)
 {
 	// ディスプレイ、カーソルの表示ON/OFF設定
@@ -301,32 +296,32 @@ static int aqm0802a_clear_display(struct i2c_client *client)
 	return aqm0802a_write_command_byte(client, 0x01);
 }
 
-static int aqm0802a_set_address(struct i2c_client *client,
-	const unsigned char address)
+static int aqm0802a_set_address(
+	struct i2c_client *client, const unsigned char address)
 {
 	// カーソルを移動（RAMのアドレスを変更）
 	// アドレスとディスプレイの関係
 	// 1行目: 0x00 01 02 03 04 05 06 07
 	// 2行目: 0x40 41 42 43 44 45 46 47
-	if(address <= 0x07 || (address >= 0x40 && address <= 0x47)){
+	if (address <= 0x07 || (address >= 0x40 && address <= 0x47)) {
 		unsigned char data = 0x80 | address;
 		return aqm0802a_write_command_byte(client, data);
-	}else{
-		printk(KERN_ERR "%s %s: invalid LCD RAM address: %x\n", I2C_DRIVER_NAME,
-			__func__, address);
+	} else {
+		printk(KERN_ERR "%s %s: invalid LCD RAM address: %x\n",
+			I2C_DRIVER_NAME, __func__, address);
 		return -1;
 	}
 }
 
-static int aqm0802a_write_data_byte(struct i2c_client *client,
-	const unsigned char data)
+static int aqm0802a_write_data_byte(
+	struct i2c_client *client, const unsigned char data)
 {
 	const unsigned char CONTROL_DATA_BYTE = 0x40;
 	int retval = i2c_smbus_write_byte_data(client, CONTROL_DATA_BYTE, data);
-	if(retval < 0){
-		printk(KERN_ERR "%s %s: write_byte_data 0x%x failed. error: %d\n",
-			I2C_DRIVER_NAME, __func__,
-			data, retval);
+	if (retval < 0) {
+		printk(KERN_ERR
+			"%s %s: write_byte_data 0x%x failed. error: %d\n",
+			I2C_DRIVER_NAME, __func__, data, retval);
 		return -1;
 	}
 	usleep_range(WAIT_TIME_USEC_MIN, WAIT_TIME_USEC_MAX);
@@ -346,26 +341,26 @@ static int aqm0802a_write_lines(struct i2c_client *client, char *text)
 
 	// 入力された文字のバイト数だけ繰り返す
 	size_t text_size = strlen(text);
-	for(int i = 0; i < text_size; i++){
-		unsigned char converted_char = 0xa0;  // 空白
+	for (int i = 0; i < text_size; i++) {
+		unsigned char converted_char = 0xa0; // 空白
 
-		if(text[i] == 0x0a){  // 改行
+		if (text[i] == 0x0a) { // 改行
 			aqm0802a_set_address(client, 0x40);
 			continue;
 		}
 
-		if(text[i] < 0x7e){  // ASCII
+		if (text[i] < 0x7e) { // ASCII
 			// ASCIIなのでそのまま書き込める
 			converted_char = text[i];
-		}else if(text[i] == 0xef){  // 半角カタカナ
-			if(text[i+1] == 0xbd){
-				converted_char = text[i+2];
-			}else if(text[i+1] == 0xbe){
-				converted_char = text[i+2] + 0x40;
+		} else if (text[i] == 0xef) { // 半角カタカナ
+			if (text[i + 1] == 0xbd) {
+				converted_char = text[i + 2];
+			} else if (text[i + 1] == 0xbe) {
+				converted_char = text[i + 2] + 0x40;
 			}
-			i += 2;  // 3バイト文字なので、その分インクリメントする
+			i += 2; // 3バイト文字なので、その分インクリメントする
 		}
-		
+
 		aqm0802a_write_data_byte(client, converted_char);
 	}
 
@@ -380,32 +375,33 @@ static int aqm0802a_init_device(struct i2c_client *client)
 	unsigned char display_2line = 1;
 	unsigned char double_height_font = 0;
 	unsigned char instruction_table = 0;
-	aqm0802a_set_function(client, bus_8bit, display_2line, double_height_font,
-		instruction_table);
+	aqm0802a_set_function(client, bus_8bit, display_2line,
+		double_height_font, instruction_table);
 
 	instruction_table = 1;
-	aqm0802a_set_function(client, bus_8bit, display_2line, double_height_font,
-		instruction_table);
+	aqm0802a_set_function(client, bus_8bit, display_2line,
+		double_height_font, instruction_table);
 	aqm0802a_set_osc_freq(client, 0, 1, 0, 0);
 	aqm0802a_set_contrast_lowbyte(client, 0, 0, 0, 0);
 	aqm0802a_set_power_and_contruct_highbits(client, 0, 1, 1, 0);
 	aqm0802a_set_follower_control(client, 1, 1, 0, 0);
 
 	instruction_table = 0;
-	aqm0802a_set_function(client, bus_8bit, display_2line, double_height_font,
-		instruction_table);
+	aqm0802a_set_function(client, bus_8bit, display_2line,
+		double_height_font, instruction_table);
 
 	aqm0802a_turn_on_display(client, 1, 0, 0);
 	aqm0802a_clear_display(client);
 	return 0;
 }
 
-static int aqm0802a_probe(struct i2c_client *client, const struct i2c_device_id *id)
+static int aqm0802a_probe(
+	struct i2c_client *client, const struct i2c_device_id *id)
 {
 	printk(KERN_INFO "%s: new i2c device probed, id.name=%s, "
 			 "id.driver_data=%d, addr=0x%x\n",
-			 I2C_DRIVER_NAME, id->name, (int)(id->driver_data),
-			 client->addr);
+		I2C_DRIVER_NAME, id->name, (int)(id->driver_data),
+		client->addr);
 
 	struct lcd_device_info *dev_info;
 	dev_info = kzalloc(sizeof(struct lcd_device_info), GFP_KERNEL);
@@ -420,7 +416,7 @@ static int aqm0802a_probe(struct i2c_client *client, const struct i2c_device_id 
 
 	// LCDの初期化
 	aqm0802a_init_device(client);
-	aqm0802a_write_lines(client, "FrootsPI\nﾌﾙｰﾂﾊﾟｲ!");
+	aqm0802a_write_lines(client, "FrootsPi\nﾌﾙｰﾂﾊﾟｲ!");
 
 	// キャラクタデバイスの登録
 	return register_lcd_dev(dev_info);
@@ -433,8 +429,8 @@ static int aqm0802a_remove(struct i2c_client *client)
 	unregister_lcd_dev(dev_info);
 	kfree(dev_info);
 
-	printk(KERN_INFO "%s %s: i2c device removed.\n",
-		I2C_DRIVER_NAME, __func__);
+	printk(KERN_INFO "%s %s: i2c device removed.\n", I2C_DRIVER_NAME,
+		__func__);
 	return 0;
 }
 
@@ -455,7 +451,7 @@ int register_aqm0802a_driver_and_lcd_dev(void)
 	// I2Cドライバをカーネルに登録
 
 	int retval = i2c_add_driver(&aqm0802a_driver);
-	if(retval){
+	if (retval) {
 		printk(KERN_ERR "%s %s: i2c_add_driver() failed.\n",
 			I2C_DRIVER_NAME, __func__);
 		return retval;
@@ -472,6 +468,6 @@ void unregister_aqm0802a_driver_and_lcd_dev(void)
 {
 	printk(KERN_INFO "%s %s: unregister.\n", I2C_DRIVER_NAME, __func__);
 	i2c_del_driver(&aqm0802a_driver);
-	if(aqm0802a_client)
+	if (aqm0802a_client)
 		i2c_unregister_device(aqm0802a_client);
 }
